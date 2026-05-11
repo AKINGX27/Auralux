@@ -33,6 +33,11 @@ NPM_CACHE_DIR="$BUILD_DIR/npm-cache"
 JDK_DIR="$BUILD_DIR/jdk"
 ANDROID_HOME_DIR="$BUILD_DIR/android-sdk"
 GRADLE_USER_HOME_DIR="$BUILD_DIR/gradle"
+SIGNING_DIR="$BUILD_DIR/signing"
+ANDROID_KEYSTORE="${AURALUX_ANDROID_KEYSTORE:-$SIGNING_DIR/debug-install.keystore}"
+ANDROID_KEY_ALIAS="${AURALUX_ANDROID_KEY_ALIAS:-auralux-debug-install}"
+ANDROID_KEYSTORE_PASS="${AURALUX_ANDROID_KEYSTORE_PASS:-auralux-debug-install}"
+ANDROID_KEY_PASS="${AURALUX_ANDROID_KEY_PASS:-$ANDROID_KEYSTORE_PASS}"
 
 log() {
   printf '[auralux-apk] %s\n' "$*"
@@ -48,6 +53,10 @@ Useful environment variables:
   AURALUX_PROXY=http://127.0.0.1:19000
   AURALUX_ANDROID_ABI=aarch64
   AURALUX_ANDROID_SDK_DIRECT=1
+  AURALUX_ANDROID_KEYSTORE=/path/to/release.keystore
+  AURALUX_ANDROID_KEY_ALIAS=release
+  AURALUX_ANDROID_KEYSTORE_PASS=...
+  AURALUX_ANDROID_KEY_PASS=...
   AURALUX_GRADLE_OFFICIAL_REPOSITORIES=1
   AURALUX_GRADLE_MAVEN_MIRRORS="https://maven.aliyun.com/repository/google ..."
 
@@ -57,6 +66,7 @@ Caches kept under .auralux-build:
   gradle/        Gradle wrapper, Maven dependency cache, mirror config
   jdk/           extracted JDK 21
   npm-cache/     npm package cache
+  signing/       local install keystore when no release keystore is provided
 EOF
 }
 
@@ -589,14 +599,73 @@ build_apk() {
   npm --workspace apps/tauri exec tauri -- android build --apk --target "$ANDROID_ABI" --ci --split-per-abi
 }
 
+ensure_android_keystore() {
+  export JAVA_HOME="$JDK_DIR"
+  export PATH="$JAVA_HOME/bin:$PATH"
+
+  if [ -f "$ANDROID_KEYSTORE" ]; then
+    log "Using Android signing keystore: $ANDROID_KEYSTORE"
+    return
+  fi
+
+  mkdir -p "$(dirname "$ANDROID_KEYSTORE")"
+  log "Generating local Android install keystore: $ANDROID_KEYSTORE"
+  keytool -genkeypair \
+    -keystore "$ANDROID_KEYSTORE" \
+    -storepass "$ANDROID_KEYSTORE_PASS" \
+    -keypass "$ANDROID_KEY_PASS" \
+    -alias "$ANDROID_KEY_ALIAS" \
+    -keyalg RSA \
+    -keysize 2048 \
+    -validity 10000 \
+    -dname "CN=Auralux Local Install, OU=Auralux, O=Auralux, L=Local, ST=Local, C=US" \
+    >/dev/null
+}
+
+sign_apk_artifacts() {
+  export JAVA_HOME="$JDK_DIR"
+  export ANDROID_HOME="$ANDROID_HOME_DIR"
+  export ANDROID_SDK_ROOT="$ANDROID_HOME_DIR"
+  export PATH="$JAVA_HOME/bin:$ANDROID_HOME/build-tools/$ANDROID_BUILD_TOOLS:$PATH"
+
+  local zipalign="$ANDROID_HOME/build-tools/$ANDROID_BUILD_TOOLS/zipalign"
+  local apksigner="$ANDROID_HOME/build-tools/$ANDROID_BUILD_TOOLS/apksigner"
+  if [ ! -x "$zipalign" ] || [ ! -x "$apksigner" ]; then
+    printf 'Android build-tools missing zipalign/apksigner under %s\n' "$ANDROID_HOME/build-tools/$ANDROID_BUILD_TOOLS" >&2
+    exit 1
+  fi
+
+  ensure_android_keystore
+
+  local apk aligned signed base
+  find apps/tauri/src-tauri/gen/android -type f -name '*-unsigned.apk' -print0 |
+    while IFS= read -r -d '' apk; do
+      base="${apk%-unsigned.apk}"
+      aligned="${base}-aligned.apk"
+      signed="${base}-signed.apk"
+      log "Signing APK: ${apk#$ROOT_DIR/}"
+      rm -f "$aligned" "$signed" "$signed.idsig"
+      "$zipalign" -f -p 4 "$apk" "$aligned"
+      "$apksigner" sign \
+        --ks "$ANDROID_KEYSTORE" \
+        --ks-key-alias "$ANDROID_KEY_ALIAS" \
+        --ks-pass "pass:$ANDROID_KEYSTORE_PASS" \
+        --key-pass "pass:$ANDROID_KEY_PASS" \
+        --out "$signed" \
+        "$aligned"
+      "$apksigner" verify --verbose --print-certs "$signed" >/dev/null
+      rm -f "$aligned"
+    done
+}
+
 stage_artifacts() {
   local stage_dir="$ROOT_DIR/release/auralux-android"
   rm -rf "$stage_dir"
   mkdir -p "$stage_dir"
 
-  find apps/tauri/src-tauri/gen/android -type f \( -name '*.apk' -o -name '*.aab' \) -print -exec cp {} "$stage_dir/" \;
+  find apps/tauri/src-tauri/gen/android -type f \( -name '*-signed.apk' -o -name '*.aab' \) -print -exec cp {} "$stage_dir/" \;
   if ! find "$stage_dir" -type f -name '*.apk' | grep -q .; then
-    printf 'No APK was produced under apps/tauri/src-tauri/gen/android.\n' >&2
+    printf 'No signed APK was produced under apps/tauri/src-tauri/gen/android.\n' >&2
     exit 1
   fi
 
@@ -647,6 +716,7 @@ main() {
   install_rust_android_targets
   build_frontend
   build_apk
+  sign_apk_artifacts
   stage_artifacts
 }
 
