@@ -31,11 +31,72 @@
   } from './lib/api';
   import { formatDuration, pct } from './lib/format';
 
-  let view: 'library' | 'playlists' | 'conversions' | 'settings' = 'library';
+  type View = 'library' | 'playlists' | 'conversions' | 'settings';
+
+  const viewCopy: Record<
+    View,
+    {
+      label: string;
+      title: string;
+      subtitle: string;
+    }
+  > = {
+    library: {
+      label: 'Library',
+      title: 'Music, cleanly laid out',
+      subtitle: 'Scan folders, browse tracks, and drag music into playlists.'
+    },
+    playlists: {
+      label: 'Playlists',
+      title: 'Keep the sets that matter',
+      subtitle: 'Drop audio from Explorer or drag from the library to build a playlist.'
+    },
+    conversions: {
+      label: 'Conversions',
+      title: 'Transcode on the local machine',
+      subtitle: 'Queue FFmpeg jobs without leaving the app.'
+    },
+    settings: {
+      label: 'Settings',
+      title: 'Codec capability matrix',
+      subtitle: 'See what the local ffmpeg, ffprobe, and mpv build can actually do.'
+    }
+  };
+
+  const audioExtensions = new Set([
+    'aac',
+    'aif',
+    'aiff',
+    'alac',
+    'ape',
+    'caf',
+    'dff',
+    'dsf',
+    'flac',
+    'm4a',
+    'mka',
+    'mp2',
+    'mp3',
+    'mp4',
+    'mpc',
+    'oga',
+    'ogg',
+    'opus',
+    'tak',
+    'tta',
+    'wav',
+    'weba',
+    'wma',
+    'wv'
+  ]);
+
+  let view: View = 'library';
   let health: Health | null = null;
   let tracks: Track[] = [];
   let playlists: Playlist[] = [];
   let activePlaylist: PlaylistDetail | null = null;
+  let selectedTrackId: number | null = null;
+  let selectedPlaylistId: number | null = null;
   let jobs: JobRecord[] = [];
   let playback: PlaybackState = { playing: false, position_seconds: 0, volume: 100 };
   let search = '';
@@ -48,6 +109,16 @@
   let status = 'Local core not connected';
   let playlistDropActive = false;
   let playlistImporting = false;
+
+  $: activePlaylistTracks = activePlaylist?.tracks ?? [];
+  $: selectedTrack =
+    tracks.find((track) => track.id === selectedTrackId) ??
+    activePlaylistTracks.find((track) => track.id === selectedTrackId) ??
+    activePlaylistTracks[0] ??
+    tracks[0] ??
+    null;
+  $: nowPlayingTitle = playback.loaded_path ? basename(playback.loaded_path) : 'Nothing playing';
+  $: selectedFormats = collectFormats(view === 'playlists' ? activePlaylistTracks : tracks);
 
   const nav = [
     { id: 'library', label: 'Library', icon: Library },
@@ -109,16 +180,26 @@
       activePlaylist = null;
       return;
     }
-    const current = activePlaylist && playlists.find((playlist) => playlist.id === activePlaylist?.playlist.id);
+    const current =
+      (selectedPlaylistId && playlists.find((playlist) => playlist.id === selectedPlaylistId)) ||
+      (activePlaylist && playlists.find((playlist) => playlist.id === activePlaylist?.playlist.id));
     const selected = current ?? playlists[0];
+    selectedPlaylistId = selected.id;
     activePlaylist = await apiGet<PlaylistDetail>(`/api/playlists/${selected.id}`);
+    if (!selectedTrackId || !activePlaylist.tracks.some((track) => track.id === selectedTrackId)) {
+      selectedTrackId = activePlaylist.tracks[0]?.id ?? tracks[0]?.id ?? null;
+    }
   }
 
   async function refreshPlaylists(preferredId?: number) {
     try {
       playlists = await apiGet<Playlist[]>('/api/playlists');
       if (preferredId) {
+        selectedPlaylistId = preferredId;
         activePlaylist = await apiGet<PlaylistDetail>(`/api/playlists/${preferredId}`);
+        if (!selectedTrackId || !activePlaylist.tracks.some((track) => track.id === selectedTrackId)) {
+          selectedTrackId = activePlaylist.tracks[0]?.id ?? selectedTrackId;
+        }
       } else {
         await syncActivePlaylist();
       }
@@ -157,13 +238,18 @@
         for (const file of droppedFiles) form.append('files', file, file.name);
         playlistImporting = true;
         activePlaylist = await apiUpload<PlaylistDetail>(`/api/playlists/${playlist.id}/import`, form);
+        selectedPlaylistId = playlist.id;
+        selectedTrackId = activePlaylist.tracks.at(-1)?.id ?? selectedTrackId;
         tracks = await apiGet<Track[]>(`/api/library/tracks${search ? `?search=${encodeURIComponent(search)}` : ''}`);
       } else if (Number.isFinite(trackId) && trackId > 0) {
         activePlaylist = await apiPost<PlaylistDetail>(`/api/playlists/${playlist.id}/tracks`, { track_id: trackId });
+        selectedPlaylistId = playlist.id;
+        selectedTrackId = trackId;
       } else {
         return;
       }
       playlists = await apiGet<Playlist[]>('/api/playlists');
+      await syncActivePlaylist();
       view = 'playlists';
     } catch (err) {
       error = err instanceof Error ? err.message : String(err);
@@ -175,39 +261,16 @@
   function isAudioFile(file: File) {
     if (file.type.startsWith('audio/')) return true;
     const extension = file.name.split('.').pop()?.toLowerCase() ?? '';
-    return [
-      'aac',
-      'aif',
-      'aiff',
-      'alac',
-      'ape',
-      'caf',
-      'dff',
-      'dsf',
-      'flac',
-      'm4a',
-      'mka',
-      'mp2',
-      'mp3',
-      'mp4',
-      'mpc',
-      'oga',
-      'ogg',
-      'opus',
-      'tak',
-      'tta',
-      'wav',
-      'weba',
-      'wma',
-      'wv'
-    ].includes(extension);
+    return audioExtensions.has(extension);
   }
 
   async function ensureDefaultPlaylist() {
     try {
       const playlist = await apiPost<Playlist>('/api/playlists', { name: 'Favorites' });
       playlists = await apiGet<Playlist[]>('/api/playlists');
+      selectedPlaylistId = playlist.id;
       activePlaylist = await apiGet<PlaylistDetail>(`/api/playlists/${playlist.id}`);
+      selectedTrackId = activePlaylist.tracks[0]?.id ?? null;
     } catch (err) {
       error = err instanceof Error ? err.message : String(err);
     }
@@ -215,7 +278,9 @@
 
   async function selectPlaylist(playlist: Playlist) {
     try {
+      selectedPlaylistId = playlist.id;
       activePlaylist = await apiGet<PlaylistDetail>(`/api/playlists/${playlist.id}`);
+      selectedTrackId = activePlaylist.tracks[0]?.id ?? selectedTrackId;
     } catch (err) {
       error = err instanceof Error ? err.message : String(err);
     }
@@ -237,6 +302,7 @@
 
   async function playTrack(track: Track) {
     try {
+      selectedTrackId = track.id;
       playback = await apiPost<PlaybackState>('/api/playback/load', { path: track.path, play: true });
     } catch (err) {
       error = err instanceof Error ? err.message : String(err);
@@ -270,6 +336,20 @@
       busy = false;
     }
   }
+
+  function basename(path: string) {
+    return path.split(/[\\/]/).pop() ?? path;
+  }
+
+  function collectFormats(items: Track[]) {
+    return Array.from(
+      new Set(
+        items
+          .map((track) => track.codec ?? track.format ?? 'audio')
+          .filter((value) => value && value.trim())
+      )
+    ).slice(0, 5);
+  }
 </script>
 
 <div class="shell">
@@ -281,7 +361,8 @@
         <span>{status}</span>
       </div>
     </div>
-    <nav>
+
+    <nav class="nav-grid">
       {#each nav as item}
         <button class:active={view === item.id} onclick={() => (view = item.id)} aria-label={item.label}>
           <svelte:component this={item.icon} size={18} />
@@ -289,40 +370,72 @@
         </button>
       {/each}
     </nav>
+
+    <div class="sidebar-meta">
+      <div>
+        <strong>{tracks.length}</strong>
+        <span>Tracks</span>
+      </div>
+      <div>
+        <strong>{playlists.length}</strong>
+        <span>Playlists</span>
+      </div>
+      <div>
+        <strong>{jobs.length}</strong>
+        <span>Jobs</span>
+      </div>
+    </div>
   </aside>
 
   <main class="main">
-    <header class="topbar glass">
-      <div class="search">
-        <Search size={17} />
-        <input bind:value={search} onkeydown={(event) => event.key === 'Enter' && refresh()} placeholder="Search library" />
+    <header class="hero glass">
+      <div class="hero-copy">
+        <p>{viewCopy[view].label}</p>
+        <h1>{viewCopy[view].title}</h1>
+        <span>{viewCopy[view].subtitle}</span>
       </div>
-      <button class="icon-button" onclick={refresh} aria-label="Refresh" title="Refresh">
-        <RefreshCw size={18} class={busy ? 'spin' : ''} />
-      </button>
+      <div class="hero-actions">
+        <div class="search shell-search">
+          <Search size={17} />
+          <input bind:value={search} onkeydown={(event) => event.key === 'Enter' && refresh()} placeholder="Search library" />
+        </div>
+        <button class="icon-button" onclick={refresh} aria-label="Refresh" title="Refresh">
+          <RefreshCw size={18} class={busy ? 'spin' : ''} />
+        </button>
+      </div>
     </header>
 
     {#if error}
-      <section class="notice glass">{error}</section>
+      <section class="banner glass">{error}</section>
     {/if}
 
-    {#if view === 'library'}
-      <section class="library-grid">
-        <div class="panel glass">
-          <div class="panel-head">
+    <section class="content-grid">
+      <section class="surface glass">
+        {#if view === 'library'}
+          <div class="surface-head">
             <div>
               <p>Library</p>
-              <h1>{tracks.length} tracks</h1>
+              <h2>Browse and queue</h2>
             </div>
-            <Album size={24} />
+            <button class="icon-button" onclick={runScan} aria-label="Scan folder" title="Scan folder">
+              <FolderPlus size={18} />
+            </button>
           </div>
-          <div class="scan-row">
+
+          <div class="command-row">
             <input bind:value={scanPath} placeholder="/Users/name/Music or /sdcard/Music" />
             <button onclick={runScan}><FolderPlus size={17} />Scan</button>
           </div>
+
           <div class="track-list">
             {#each tracks as track}
-              <button class="track" draggable="true" ondragstart={(event) => dragTrack(event, track)} onclick={() => playTrack(track)}>
+              <button
+                class:selected={selectedTrackId === track.id}
+                class="track"
+                draggable="true"
+                ondragstart={(event) => dragTrack(event, track)}
+                onclick={() => playTrack(track)}
+              >
                 <div class="cover">{track.title.slice(0, 1).toUpperCase()}</div>
                 <div class="track-meta">
                   <strong>{track.title}</strong>
@@ -335,154 +448,196 @@
               <div class="empty">No tracks yet.</div>
             {/each}
           </div>
-        </div>
-
-        <aside class="queue glass">
-          <div class="panel-head">
-            <div>
-              <p>Queue</p>
-              <h2>Up next</h2>
-            </div>
-            <Shuffle size={21} />
-          </div>
-          {#each tracks.slice(0, 8) as track}
-            <div class="queue-item">
-              <span>{track.title}</span>
-              <small>{track.artist}</small>
-            </div>
-          {:else}
-            <div class="empty compact">No queued tracks.</div>
-          {/each}
-        </aside>
-      </section>
-    {:else if view === 'playlists'}
-      <section class="playlist-layout">
-        <aside class="playlist-list glass">
-          <div class="panel-head">
-            <div>
-              <p>Playlists</p>
-              <h2>{playlists.length} lists</h2>
-            </div>
-            <button class="icon-button" onclick={ensureDefaultPlaylist} aria-label="New playlist" title="New playlist">
-              <ListMusic size={18} />
-            </button>
-          </div>
-          {#each playlists as playlist}
-            <button class="playlist-tab" class:active={activePlaylist?.playlist.id === playlist.id} onclick={() => selectPlaylist(playlist)}>
-              <strong>{playlist.name}</strong>
-              <span>{playlist.track_count} tracks</span>
-            </button>
-          {:else}
-            <button class="playlist-tab active" onclick={ensureDefaultPlaylist}>
-              <strong>Favorites</strong>
-              <span>Create playlist</span>
-            </button>
-          {/each}
-        </aside>
-
-        <section
-          class="panel glass playlist-drop"
-          class:drop-active={playlistDropActive}
-          aria-label="Playlist drop area"
-          ondragover={dragOverPlaylist}
-          ondragleave={() => (playlistDropActive = false)}
-          ondrop={dropOnPlaylist}
-        >
-          <div class="panel-head">
-            <div>
-              <p>Drop tracks here</p>
-              <h1>{activePlaylist?.playlist.name ?? 'Favorites'}</h1>
-            </div>
-            {#if playlistImporting}
-              <RefreshCw size={22} class="spin" />
-            {:else}
-              <ListMusic size={24} />
-            {/if}
-          </div>
-          <div class="track-list">
-            {#each activePlaylist?.tracks ?? [] as track}
-              <button class="track" onclick={() => playTrack(track)}>
-                <div class="cover">{track.title.slice(0, 1).toUpperCase()}</div>
-                <div class="track-meta">
-                  <strong>{track.title}</strong>
-                  <span>{track.artist} · {track.album}</span>
+        {:else if view === 'playlists'}
+          <div class="playlist-shell">
+            <aside class="playlist-rail">
+              <div class="surface-head tight">
+                <div>
+                  <p>Playlists</p>
+                  <h2>{playlists.length} lists</h2>
                 </div>
-                <span>{track.codec ?? track.format ?? 'audio'}</span>
-                <time>{formatDuration(track.duration_ms)}</time>
-              </button>
+                <button class="icon-button" onclick={ensureDefaultPlaylist} aria-label="New playlist" title="New playlist">
+                  <ListMusic size={18} />
+                </button>
+              </div>
+              <div class="playlist-list">
+                {#each playlists as playlist}
+                  <button class="playlist-tab" class:active={activePlaylist?.playlist.id === playlist.id} onclick={() => selectPlaylist(playlist)}>
+                    <strong>{playlist.name}</strong>
+                    <span>{playlist.track_count} tracks</span>
+                  </button>
+                {:else}
+                  <button class="playlist-tab active" onclick={ensureDefaultPlaylist}>
+                    <strong>Favorites</strong>
+                    <span>Create playlist</span>
+                  </button>
+                {/each}
+              </div>
+            </aside>
+
+            <section class="playlist-detail">
+              <div class="surface-head">
+                <div>
+                  <p>Playlist editor</p>
+                  <h2>{activePlaylist?.playlist.name ?? 'Favorites'}</h2>
+                </div>
+                {#if playlistImporting}
+                  <RefreshCw size={20} class="spin" />
+                {:else}
+                  <ListMusic size={20} />
+                {/if}
+              </div>
+
+              <div
+                class="dropzone"
+                class:drop-active={playlistDropActive}
+                role="region"
+                ondragover={dragOverPlaylist}
+                ondragleave={() => (playlistDropActive = false)}
+                ondrop={dropOnPlaylist}
+                aria-label="Playlist drop area"
+              >
+                <div>
+                  <strong>{playlistImporting ? 'Importing files' : 'Drop tracks here'}</strong>
+                  <span>{playlistImporting ? 'Uploading and indexing on the local daemon.' : 'Drag from the library or drop audio files from Explorer.'}</span>
+                </div>
+              </div>
+
+              <div class="track-list">
+                {#each activePlaylistTracks as track}
+                  <button class:selected={selectedTrackId === track.id} class="track" onclick={() => playTrack(track)}>
+                    <div class="cover">{track.title.slice(0, 1).toUpperCase()}</div>
+                    <div class="track-meta">
+                      <strong>{track.title}</strong>
+                      <span>{track.artist} · {track.album}</span>
+                    </div>
+                    <span>{track.codec ?? track.format ?? 'audio'}</span>
+                    <time>{formatDuration(track.duration_ms)}</time>
+                  </button>
+                {:else}
+                  <div class="empty">Drag tracks or audio files into this area.</div>
+                {/each}
+              </div>
+            </section>
+          </div>
+        {:else if view === 'conversions'}
+          <div class="surface-head">
+            <div>
+              <p>Conversions</p>
+              <h2>Local FFmpeg jobs</h2>
+            </div>
+            <Activity size={22} />
+          </div>
+
+          <div class="conversion-card">
+            <div class="command-row conversion-grid">
+              <input bind:value={convertSource} placeholder="Source audio path" />
+              <input bind:value={convertOutput} placeholder="Output folder" />
+              <select bind:value={convertFormat}>
+                <option value="opus">Opus</option>
+                <option value="mp3">MP3</option>
+                <option value="flac">FLAC</option>
+                <option value="aac">AAC/M4A</option>
+                <option value="alac">ALAC</option>
+                <option value="wav">WAV</option>
+              </select>
+              <button onclick={createConversion}>Convert</button>
+            </div>
+          </div>
+
+          <div class="jobs">
+            {#each jobs as job}
+              <div class="job">
+                <div>
+                  <strong>{job.state}</strong>
+                  <span>{job.output_path ?? job.source_path}</span>
+                </div>
+                <progress max="1" value={job.progress}></progress>
+                <small>{pct(job.progress)}</small>
+              </div>
             {:else}
-              <div class="empty">Drag tracks or audio files into this area.</div>
+              <div class="empty">No jobs yet.</div>
+            {/each}
+          </div>
+        {:else}
+          <div class="surface-head">
+            <div>
+              <p>Settings</p>
+              <h2>Codec capability matrix</h2>
+            </div>
+            <Settings size={22} />
+          </div>
+
+          {#if health}
+            <div class="tool-rail">
+              {#each [health.capabilities.ffmpeg, health.capabilities.ffprobe, health.capabilities.mpv] as tool}
+                <div class="tool">
+                  <strong>{tool.name}</strong>
+                  <span class:ok={tool.available}>{tool.available ? 'available' : 'missing'}</span>
+                  <small>{tool.version ?? tool.path ?? 'Unavailable'}</small>
+                </div>
+              {/each}
+            </div>
+
+            <div class="capability-columns">
+              <CapabilityList title="Encoders" items={health.capabilities.encoders} />
+              <CapabilityList title="Decoders" items={health.capabilities.decoders} />
+              <CapabilityList title="Muxers" items={health.capabilities.muxers} />
+              <CapabilityList title="Demuxers" items={health.capabilities.demuxers} />
+            </div>
+          {:else}
+            <div class="empty">Codec matrix unavailable.</div>
+          {/if}
+        {/if}
+      </section>
+
+      <aside class="context-stack">
+        <section class="glass context-panel">
+          <div class="surface-head">
+            <div>
+              <p>Now playing</p>
+              <h2>{nowPlayingTitle}</h2>
+            </div>
+            <button class="transport" onclick={togglePlayback} aria-label={playback.playing ? 'Pause' : 'Play'}>
+              {#if playback.playing}<Pause size={18} />{:else}<Play size={18} />{/if}
+            </button>
+          </div>
+          <div class="context-stat">
+            <strong>{playback.playing ? 'Playing' : 'Ready'}</strong>
+            <span>{Math.round(playback.volume)}% volume</span>
+          </div>
+          <div class="context-stat">
+            <strong>{selectedTrack?.title ?? 'Nothing selected'}</strong>
+            <span>{selectedTrack ? `${selectedTrack.artist} · ${selectedTrack.album}` : 'Choose a track to preview details.'}</span>
+          </div>
+          <div class="context-chip-row">
+            {#each selectedFormats as format}
+              <span>{format}</span>
             {/each}
           </div>
         </section>
-      </section>
-    {:else if view === 'conversions'}
-      <section class="panel glass">
-        <div class="panel-head">
-          <div>
-            <p>Conversions</p>
-            <h1>Local FFmpeg jobs</h1>
-          </div>
-          <Activity size={24} />
-        </div>
-        <div class="conversion-form">
-          <input bind:value={convertSource} placeholder="Source audio path" />
-          <input bind:value={convertOutput} placeholder="Output folder" />
-          <select bind:value={convertFormat}>
-            <option value="opus">Opus</option>
-            <option value="mp3">MP3</option>
-            <option value="flac">FLAC</option>
-            <option value="aac">AAC/M4A</option>
-            <option value="alac">ALAC</option>
-            <option value="wav">WAV</option>
-          </select>
-          <button onclick={createConversion}>Convert</button>
-        </div>
-        <div class="jobs">
-          {#each jobs as job}
-            <div class="job">
-              <div>
-                <strong>{job.state}</strong>
-                <span>{job.output_path ?? job.source_path}</span>
-              </div>
-              <progress max="1" value={job.progress}></progress>
-              <small>{pct(job.progress)}</small>
+
+        <section class="glass context-panel">
+          <div class="surface-head">
+            <div>
+              <p>Playback queue</p>
+              <h2>Up next</h2>
             </div>
-          {:else}
-          <div class="empty">No jobs yet.</div>
-          {/each}
-        </div>
-      </section>
-    {:else}
-      <section class="panel glass settings-panel">
-        <div class="panel-head">
-          <div>
-            <p>Settings</p>
-            <h1>Codec matrix</h1>
+            <Shuffle size={18} />
           </div>
-          <Settings size={24} />
-        </div>
-        {#if health}
-          <div class="matrix">
-            {#each [health.capabilities.ffmpeg, health.capabilities.ffprobe, health.capabilities.mpv] as tool}
-              <div class="tool">
-                <strong>{tool.name}</strong>
-                <span class:ok={tool.available}>{tool.available ? 'available' : 'missing'}</span>
-                <small>{tool.version ?? tool.path ?? 'Unavailable'}</small>
-              </div>
+          <div class="queue">
+            {#each tracks.slice(0, 8) as track}
+              <button class:selected={selectedTrackId === track.id} class="queue-item" onclick={() => playTrack(track)}>
+                <span>{track.title}</span>
+                <small>{track.artist}</small>
+              </button>
+            {:else}
+              <div class="empty compact">No queued tracks.</div>
             {/each}
           </div>
-          <div class="capability-columns">
-            <CapabilityList title="Encoders" items={health.capabilities.encoders} />
-            <CapabilityList title="Decoders" items={health.capabilities.decoders} />
-            <CapabilityList title="Muxers" items={health.capabilities.muxers} />
-            <CapabilityList title="Demuxers" items={health.capabilities.demuxers} />
-          </div>
-        {:else}
-          <div class="empty">Codec matrix unavailable.</div>
-        {/if}
-      </section>
-    {/if}
+        </section>
+      </aside>
+    </section>
   </main>
 
   <footer class="player glass">
@@ -490,9 +645,12 @@
       {#if playback.playing}<Pause size={20} />{:else}<Play size={20} />{/if}
     </button>
     <div class="now">
-      <strong>{playback.loaded_path ? playback.loaded_path.split('/').pop() : 'Nothing playing'}</strong>
-      <span>{playback.playing ? 'Playing' : 'Ready'}</span>
+      <strong>{nowPlayingTitle}</strong>
+      <span>{playback.playing ? 'Playing now' : 'Ready to play'}</span>
     </div>
-    <div class="volume">{Math.round(playback.volume)}%</div>
+    <div class="player-meta">
+      <span>{status}</span>
+      <strong>{playlists.length} playlists</strong>
+    </div>
   </footer>
 </div>
