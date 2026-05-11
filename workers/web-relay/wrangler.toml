@@ -1,0 +1,14 @@
+name = "auralux-web-relay"
+main = "src/index.ts"
+compatibility_date = "2026-05-10"
+
+assets = { directory = "../../apps/gui/dist", binding = "ASSETS" }
+
+[[durable_objects.bindings]]
+name = "PAIRING_ROOMS"
+class_name = "PairingRoom"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["PairingRoom"]
+

@@ -1,0 +1,95 @@
+# OS and editor noise
+.DS_Store
+Thumbs.db
+Desktop.ini
+*.swp
+*.swo
+*~
+.idea/
+.vscode/
+!.vscode/extensions.json
+
+# Environment and secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.mobileprovision
+*.jks
+*.keystore
+
+# Logs and diagnostics
+*.log
+logs/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+crash.log
+
+# Rust
+target/
+**/target/
+*.profraw
+*.profdata
+flamegraph.svg
+
+# Node and frontend
+node_modules/
+**/node_modules/
+dist/
+**/dist/
+build/
+**/build/
+.svelte-kit/
+**/.svelte-kit/
+.vite/
+**/.vite/
+coverage/
+**/coverage/
+playwright-report/
+test-results/
+
+# Tauri
+apps/tauri/src-tauri/gen/
+apps/tauri/src-tauri/target/
+apps/tauri/src-tauri/.tauri/
+*.app
+*.dmg
+*.msi
+*.AppImage
+*.deb
+*.rpm
+
+# Android
+*.apk
+*.aab
+*.ap_
+*.idsig
+local.properties
+.gradle/
+**/.gradle/
+captures/
+
+# Cloudflare / Wrangler
+.wrangler/
+**/.wrangler/
+.dev.vars
+workers/web-relay/.mf/
+
+# Local Auralux data
+*.db
+*.db-shm
+*.db-wal
+.auralux/
+
+# Release artifacts
+artifacts/
+release/
+.auralux-build/
+*.tar.gz
+*.tgz
+*.zip
+*.sha256

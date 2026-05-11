@@ -1,0 +1,22 @@
+[package]
+name = "auralux-cli"
+version = "0.1.0"
+description = "Auralux command line interface."
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "auralux"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+auralux-core = { path = "../auralux-core" }
+clap.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+which.workspace = true
+

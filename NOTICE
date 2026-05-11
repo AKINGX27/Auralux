@@ -1,0 +1,4 @@
+Auralux is GPL-3.0-or-later software.
+
+FFmpeg and mpv are discovered at runtime on desktop where possible. Optional codec packs must ship their own corresponding source, license texts, and build flags. Official Auralux builds must not include FFmpeg components configured as nonfree.
+

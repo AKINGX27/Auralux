@@ -1,0 +1,34 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Auralux",
+  "version": "0.1.0",
+  "identifier": "org.auralux.player",
+  "build": {
+    "beforeDevCommand": "cd ../.. && npm --workspace apps/gui run dev",
+    "devUrl": "http://127.0.0.1:5173",
+    "beforeBuildCommand": "cd ../.. && npm --workspace apps/gui run build",
+    "frontendDist": "../../gui/dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "Auralux",
+        "width": 1180,
+        "height": 760,
+        "minWidth": 900,
+        "minHeight": 620,
+        "transparent": true,
+        "decorations": true
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; connect-src 'self' http://127.0.0.1:4147 ws://127.0.0.1:4147; style-src 'self' 'unsafe-inline'"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "license": "../../../LICENSE",
+    "resources": []
+  }
+}

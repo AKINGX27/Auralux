@@ -1,0 +1,23 @@
+{
+  "name": "auralux",
+  "private": true,
+  "version": "0.1.0",
+  "license": "GPL-3.0-or-later",
+  "type": "module",
+  "workspaces": [
+    "apps/gui",
+    "apps/tauri",
+    "workers/web-relay"
+  ],
+  "scripts": {
+    "dev": "npm --workspace apps/gui run dev",
+    "build": "npm --workspace apps/gui run build && npm --workspace workers/web-relay run build",
+    "build:android:apk": "bash scripts/build-android-apk.sh",
+    "build:desktop:windows": "bash scripts/build-windows-desktop.sh",
+    "check": "npm --workspace apps/gui run check",
+    "test": "npm --workspace workers/web-relay run test"
+  },
+  "devDependencies": {
+    "prettier": "^3.5.3"
+  }
+}
