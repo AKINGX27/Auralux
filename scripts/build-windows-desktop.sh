@@ -182,13 +182,10 @@ download_apt_package() {
 
 write_mingw_shims() {
   mkdir -p "$BIN_DIR"
+  rm -f "$BIN_DIR/gcc" "$BIN_DIR/cc" "$BIN_DIR/g++" "$BIN_DIR/c++"
   ln -sf "$MINGW_BIN/x86_64-w64-mingw32-gcc-posix" "$BIN_DIR/x86_64-w64-mingw32-gcc"
   ln -sf "$MINGW_BIN/x86_64-w64-mingw32-g++-posix" "$BIN_DIR/x86_64-w64-mingw32-g++"
   ln -sf "$MINGW_BIN/x86_64-w64-mingw32-g++-posix" "$BIN_DIR/x86_64-w64-mingw32-c++"
-  ln -sf "$MINGW_BIN/x86_64-w64-mingw32-gcc-posix" "$BIN_DIR/gcc"
-  ln -sf "$MINGW_BIN/x86_64-w64-mingw32-gcc-posix" "$BIN_DIR/cc"
-  ln -sf "$MINGW_BIN/x86_64-w64-mingw32-g++-posix" "$BIN_DIR/g++"
-  ln -sf "$MINGW_BIN/x86_64-w64-mingw32-g++-posix" "$BIN_DIR/c++"
   ln -sf "$MINGW_BIN/x86_64-w64-mingw32-dlltool" "$BIN_DIR/x86_64-w64-mingw32-dlltool"
   ln -sf "$MINGW_BIN/x86_64-w64-mingw32-dlltool" "$BIN_DIR/dlltool"
   ln -sf "$MINGW_BIN/x86_64-w64-mingw32-windres" "$BIN_DIR/x86_64-w64-mingw32-windres"
@@ -432,6 +429,29 @@ WRAPPER
   ln -sf zig-cxx-windows "$BIN_DIR/x86_64-w64-mingw32-g++"
 }
 
+write_windres_wrapper() {
+  mkdir -p "$BIN_DIR"
+  cat > "$BIN_DIR/auralux-windres" <<WRAPPER
+#!/usr/bin/env bash
+set -euo pipefail
+case "\${1:-}" in
+  -V|--version)
+    exec "$MINGW_BIN/x86_64-w64-mingw32-windres" "\$@"
+    ;;
+  /?)
+    exec "$MINGW_BIN/x86_64-w64-mingw32-windres" --help
+    ;;
+esac
+exec "$MINGW_BIN/x86_64-w64-mingw32-windres" \\
+  --preprocessor="$MINGW_BIN/x86_64-w64-mingw32-gcc-posix" \\
+  --preprocessor-arg=-E \\
+  --preprocessor-arg=-xc \\
+  --preprocessor-arg=-DRC_INVOKED \\
+  "\$@"
+WRAPPER
+  chmod +x "$BIN_DIR/auralux-windres"
+}
+
 install_windows_target() {
   if rustup target list --installed | grep -qx "$TARGET"; then
     log "Rust target already installed: $TARGET"
@@ -530,7 +550,8 @@ build_tauri_exe() {
   export CXX_x86_64_pc_windows_gnu="$MINGW_BIN/x86_64-w64-mingw32-g++-posix"
   export AR_x86_64_pc_windows_gnu="$MINGW_BIN/x86_64-w64-mingw32-ar"
   export RANLIB_x86_64_pc_windows_gnu="$MINGW_BIN/x86_64-w64-mingw32-ranlib"
-  export RC_x86_64_pc_windows_gnu="$MINGW_BIN/x86_64-w64-mingw32-windres"
+  write_windres_wrapper
+  export RC_x86_64_pc_windows_gnu="$BIN_DIR/auralux-windres"
   export CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER="$MINGW_BIN/x86_64-w64-mingw32-gcc-posix"
   export CARGO_TARGET_X86_64_PC_WINDOWS_GNU_AR="$MINGW_BIN/x86_64-w64-mingw32-ar"
   export CARGO_TARGET_X86_64_PC_WINDOWS_GNU_RUSTFLAGS="-Cdlltool=$MINGW_BIN/x86_64-w64-mingw32-dlltool ${CARGO_TARGET_X86_64_PC_WINDOWS_GNU_RUSTFLAGS:-}"

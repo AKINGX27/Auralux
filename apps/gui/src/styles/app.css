@@ -200,8 +200,17 @@ select {
   flex: 1;
 }
 
+.playlist-layout {
+  display: grid;
+  grid-template-columns: 280px minmax(0, 1fr);
+  gap: 14px;
+  min-height: 0;
+  flex: 1;
+}
+
 .panel,
-.queue {
+.queue,
+.playlist-list {
   min-width: 0;
   min-height: 0;
   border-radius: 8px;
@@ -324,6 +333,57 @@ h2 {
   display: grid;
   align-content: start;
   gap: 10px;
+}
+
+.playlist-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.playlist-tab {
+  display: block;
+  width: 100%;
+  min-height: 58px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.045);
+  color: #f5f7fb;
+  padding: 12px;
+  text-align: left;
+}
+
+.playlist-tab.active,
+.playlist-drop.drop-active {
+  border-color: rgba(125, 211, 252, 0.48);
+  background: rgba(125, 211, 252, 0.12);
+}
+
+.playlist-tab strong,
+.playlist-tab span {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.playlist-tab span {
+  margin-top: 4px;
+  color: #9fb0c6;
+  font-size: 12px;
+}
+
+.playlist-drop {
+  outline: 1px solid transparent;
+  outline-offset: -6px;
+  transition:
+    background 160ms ease,
+    border-color 160ms ease,
+    outline-color 160ms ease;
+}
+
+.playlist-drop.drop-active {
+  outline-color: rgba(125, 211, 252, 0.34);
 }
 
 .queue-item,
@@ -516,6 +576,14 @@ progress {
 
   .library-grid {
     grid-template-columns: 1fr;
+  }
+
+  .playlist-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .playlist-list {
+    min-height: auto;
   }
 
   .queue {

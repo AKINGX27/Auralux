@@ -16,7 +16,7 @@ rust-version = "1.78"
 
 [workspace.dependencies]
 anyhow = "1.0.98"
-axum = { version = "0.7.9", features = ["macros", "ws"] }
+axum = { version = "0.7.9", features = ["macros", "multipart", "ws"] }
 chrono = { version = "0.4.40", features = ["serde"] }
 clap = { version = "4.5.37", features = ["derive", "env"] }
 directories = "6.0.0"

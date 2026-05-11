@@ -19,10 +19,13 @@
   import {
     apiGet,
     apiPost,
+    apiUpload,
     eventUrl,
     type AuraluxEvent,
     type Health,
     type JobRecord,
+    type Playlist,
+    type PlaylistDetail,
     type PlaybackState,
     type Track
   } from './lib/api';
@@ -31,6 +34,8 @@
   let view: 'library' | 'playlists' | 'conversions' | 'settings' = 'library';
   let health: Health | null = null;
   let tracks: Track[] = [];
+  let playlists: Playlist[] = [];
+  let activePlaylist: PlaylistDetail | null = null;
   let jobs: JobRecord[] = [];
   let playback: PlaybackState = { playing: false, position_seconds: 0, volume: 100 };
   let search = '';
@@ -41,6 +46,8 @@
   let busy = false;
   let error = '';
   let status = 'Local core not connected';
+  let playlistDropActive = false;
+  let playlistImporting = false;
 
   const nav = [
     { id: 'library', label: 'Library', icon: Library },
@@ -58,11 +65,13 @@
     busy = true;
     error = '';
     try {
-      [health, tracks, jobs] = await Promise.all([
+      [health, tracks, jobs, playlists] = await Promise.all([
         apiGet<Health>('/api/health'),
         apiGet<Track[]>(`/api/library/tracks${search ? `?search=${encodeURIComponent(search)}` : ''}`),
-        apiGet<JobRecord[]>('/api/jobs')
+        apiGet<JobRecord[]>('/api/jobs'),
+        apiGet<Playlist[]>('/api/playlists')
       ]);
+      await syncActivePlaylist();
       playback = await apiGet<PlaybackState>('/api/playback/state').catch(() => playback);
       status = 'Local core connected';
     } catch (err) {
@@ -83,6 +92,7 @@
         }
         if (event.type === 'playback_state') playback = event.state;
         if (event.type === 'library_updated') void refresh();
+        if (event.type === 'playlist_updated') void refreshPlaylists(event.playlist_id);
         if (event.type === 'library_scan_progress') {
           status = `Scanning ${event.scanned} files, ${event.imported} imported`;
         }
@@ -91,6 +101,123 @@
       socket.onclose = () => setTimeout(connectEvents, 2500);
     } catch {
       status = 'Events disconnected';
+    }
+  }
+
+  async function syncActivePlaylist() {
+    if (playlists.length === 0) {
+      activePlaylist = null;
+      return;
+    }
+    const current = activePlaylist && playlists.find((playlist) => playlist.id === activePlaylist?.playlist.id);
+    const selected = current ?? playlists[0];
+    activePlaylist = await apiGet<PlaylistDetail>(`/api/playlists/${selected.id}`);
+  }
+
+  async function refreshPlaylists(preferredId?: number) {
+    try {
+      playlists = await apiGet<Playlist[]>('/api/playlists');
+      if (preferredId) {
+        activePlaylist = await apiGet<PlaylistDetail>(`/api/playlists/${preferredId}`);
+      } else {
+        await syncActivePlaylist();
+      }
+    } catch (err) {
+      error = err instanceof Error ? err.message : String(err);
+    }
+  }
+
+  function dragTrack(event: DragEvent, track: Track) {
+    event.dataTransfer?.setData('application/x-auralux-track-id', String(track.id));
+    event.dataTransfer?.setData('text/plain', track.title);
+    if (event.dataTransfer) event.dataTransfer.effectAllowed = 'copy';
+  }
+
+  function dragOverPlaylist(event: DragEvent) {
+    if (!event.dataTransfer) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = 'copy';
+    playlistDropActive = true;
+  }
+
+  async function dropOnPlaylist(event: DragEvent) {
+    event.preventDefault();
+    playlistDropActive = false;
+    const transfer = event.dataTransfer;
+    const droppedFiles = [...(transfer?.files ?? [])].filter(isAudioFile);
+    const trackId = Number(transfer?.getData('application/x-auralux-track-id'));
+    if (droppedFiles.length === 0 && (!Number.isFinite(trackId) || trackId <= 0)) return;
+    try {
+      const playlist = activePlaylist?.playlist ?? (await apiPost<Playlist>('/api/playlists', { name: 'Favorites' }));
+      if (!activePlaylist || activePlaylist.playlist.id !== playlist.id) {
+        activePlaylist = await apiGet<PlaylistDetail>(`/api/playlists/${playlist.id}`);
+      }
+      if (droppedFiles.length > 0) {
+        const form = new FormData();
+        for (const file of droppedFiles) form.append('files', file, file.name);
+        playlistImporting = true;
+        activePlaylist = await apiUpload<PlaylistDetail>(`/api/playlists/${playlist.id}/import`, form);
+        tracks = await apiGet<Track[]>(`/api/library/tracks${search ? `?search=${encodeURIComponent(search)}` : ''}`);
+      } else if (Number.isFinite(trackId) && trackId > 0) {
+        activePlaylist = await apiPost<PlaylistDetail>(`/api/playlists/${playlist.id}/tracks`, { track_id: trackId });
+      } else {
+        return;
+      }
+      playlists = await apiGet<Playlist[]>('/api/playlists');
+      view = 'playlists';
+    } catch (err) {
+      error = err instanceof Error ? err.message : String(err);
+    } finally {
+      playlistImporting = false;
+    }
+  }
+
+  function isAudioFile(file: File) {
+    if (file.type.startsWith('audio/')) return true;
+    const extension = file.name.split('.').pop()?.toLowerCase() ?? '';
+    return [
+      'aac',
+      'aif',
+      'aiff',
+      'alac',
+      'ape',
+      'caf',
+      'dff',
+      'dsf',
+      'flac',
+      'm4a',
+      'mka',
+      'mp2',
+      'mp3',
+      'mp4',
+      'mpc',
+      'oga',
+      'ogg',
+      'opus',
+      'tak',
+      'tta',
+      'wav',
+      'weba',
+      'wma',
+      'wv'
+    ].includes(extension);
+  }
+
+  async function ensureDefaultPlaylist() {
+    try {
+      const playlist = await apiPost<Playlist>('/api/playlists', { name: 'Favorites' });
+      playlists = await apiGet<Playlist[]>('/api/playlists');
+      activePlaylist = await apiGet<PlaylistDetail>(`/api/playlists/${playlist.id}`);
+    } catch (err) {
+      error = err instanceof Error ? err.message : String(err);
+    }
+  }
+
+  async function selectPlaylist(playlist: Playlist) {
+    try {
+      activePlaylist = await apiGet<PlaylistDetail>(`/api/playlists/${playlist.id}`);
+    } catch (err) {
+      error = err instanceof Error ? err.message : String(err);
     }
   }
 
@@ -195,7 +322,7 @@
           </div>
           <div class="track-list">
             {#each tracks as track}
-              <button class="track" onclick={() => playTrack(track)}>
+              <button class="track" draggable="true" ondragstart={(event) => dragTrack(event, track)} onclick={() => playTrack(track)}>
                 <div class="cover">{track.title.slice(0, 1).toUpperCase()}</div>
                 <div class="track-meta">
                   <strong>{track.title}</strong>
@@ -229,10 +356,65 @@
         </aside>
       </section>
     {:else if view === 'playlists'}
-      <section class="panel glass placeholder">
-        <ListMusic size={34} />
-        <h1>Playlists</h1>
-        <p>No playlists yet.</p>
+      <section class="playlist-layout">
+        <aside class="playlist-list glass">
+          <div class="panel-head">
+            <div>
+              <p>Playlists</p>
+              <h2>{playlists.length} lists</h2>
+            </div>
+            <button class="icon-button" onclick={ensureDefaultPlaylist} aria-label="New playlist" title="New playlist">
+              <ListMusic size={18} />
+            </button>
+          </div>
+          {#each playlists as playlist}
+            <button class="playlist-tab" class:active={activePlaylist?.playlist.id === playlist.id} onclick={() => selectPlaylist(playlist)}>
+              <strong>{playlist.name}</strong>
+              <span>{playlist.track_count} tracks</span>
+            </button>
+          {:else}
+            <button class="playlist-tab active" onclick={ensureDefaultPlaylist}>
+              <strong>Favorites</strong>
+              <span>Create playlist</span>
+            </button>
+          {/each}
+        </aside>
+
+        <section
+          class="panel glass playlist-drop"
+          class:drop-active={playlistDropActive}
+          aria-label="Playlist drop area"
+          ondragover={dragOverPlaylist}
+          ondragleave={() => (playlistDropActive = false)}
+          ondrop={dropOnPlaylist}
+        >
+          <div class="panel-head">
+            <div>
+              <p>Drop tracks here</p>
+              <h1>{activePlaylist?.playlist.name ?? 'Favorites'}</h1>
+            </div>
+            {#if playlistImporting}
+              <RefreshCw size={22} class="spin" />
+            {:else}
+              <ListMusic size={24} />
+            {/if}
+          </div>
+          <div class="track-list">
+            {#each activePlaylist?.tracks ?? [] as track}
+              <button class="track" onclick={() => playTrack(track)}>
+                <div class="cover">{track.title.slice(0, 1).toUpperCase()}</div>
+                <div class="track-meta">
+                  <strong>{track.title}</strong>
+                  <span>{track.artist} · {track.album}</span>
+                </div>
+                <span>{track.codec ?? track.format ?? 'audio'}</span>
+                <time>{formatDuration(track.duration_ms)}</time>
+              </button>
+            {:else}
+              <div class="empty">Drag tracks or audio files into this area.</div>
+            {/each}
+          </div>
+        </section>
       </section>
     {:else if view === 'conversions'}
       <section class="panel glass">

@@ -11,6 +11,9 @@ pub enum AuraluxEvent {
         current_path: Option<String>,
     },
     LibraryUpdated,
+    PlaylistUpdated {
+        playlist_id: i64,
+    },
     PlaybackState {
         state: crate::playback::PlaybackState,
     },

@@ -34,6 +34,19 @@ export type Track = {
   codec?: string | null;
 };
 
+export type Playlist = {
+  id: number;
+  name: string;
+  track_count: number;
+  created_at: string;
+  updated_at: string;
+};
+
+export type PlaylistDetail = {
+  playlist: Playlist;
+  tracks: Track[];
+};
+
 export type PlaybackState = {
   loaded_path?: string | null;
   playing: boolean;
@@ -54,6 +67,7 @@ export type JobRecord = {
 export type AuraluxEvent =
   | { type: 'library_scan_progress'; scanned: number; imported: number; skipped: number; current_path?: string | null }
   | { type: 'library_updated' }
+  | { type: 'playlist_updated'; playlist_id: number }
   | { type: 'playback_state'; state: PlaybackState }
   | { type: 'job_progress'; job: JobRecord }
   | { type: 'error'; message: string };
@@ -76,6 +90,15 @@ export async function apiPost<T>(path: string, body: unknown): Promise<T> {
   return response.json();
 }
 
+export async function apiUpload<T>(path: string, body: FormData): Promise<T> {
+  const response = await fetch(`${apiBase}${path}`, {
+    method: 'POST',
+    body
+  });
+  if (!response.ok) throw new Error(await errorText(response));
+  return response.json();
+}
+
 export function eventUrl(): string {
   const base = apiBase || window.location.origin;
   const url = new URL('/api/events', base);
@@ -91,4 +114,3 @@ async function errorText(response: Response): Promise<string> {
     return response.statusText;
   }
 }
-

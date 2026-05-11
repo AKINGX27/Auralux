@@ -1,4 +1,4 @@
-use crate::types::{JobRecord, NewTrack, Track, TrackQuery};
+use crate::types::{JobRecord, NewTrack, Playlist, PlaylistDetail, Track, TrackQuery};
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use rusqlite::{params, Connection, OptionalExtension, Row};
@@ -269,6 +269,106 @@ impl LibraryDatabase {
         .map_err(Into::into)
     }
 
+    pub fn ensure_playlist(&self, name: &str) -> Result<Playlist> {
+        let trimmed = name.trim();
+        anyhow::ensure!(!trimmed.is_empty(), "playlist name cannot be empty");
+        let now = Utc::now().to_rfc3339();
+        let conn = self.connection.lock().expect("database lock poisoned");
+        conn.execute(
+            r#"
+            INSERT INTO playlists (name, created_at, updated_at)
+            VALUES (?1, ?2, ?2)
+            ON CONFLICT(name) DO UPDATE SET updated_at=updated_at
+            "#,
+            params![trimmed, now],
+        )?;
+        let id = conn.query_row(
+            "SELECT id FROM playlists WHERE name = ?1",
+            params![trimmed],
+            |row| row.get(0),
+        )?;
+        Ok(row_to_playlist_by_id(&conn, id)?)
+    }
+
+    pub fn list_playlists(&self) -> Result<Vec<Playlist>> {
+        let conn = self.connection.lock().expect("database lock poisoned");
+        let mut statement = conn.prepare(
+            r#"
+            SELECT p.*, COUNT(pi.track_id) AS track_count
+            FROM playlists p
+            LEFT JOIN playlist_items pi ON pi.playlist_id = p.id
+            GROUP BY p.id
+            ORDER BY p.updated_at DESC, p.name COLLATE NOCASE
+            "#,
+        )?;
+        let rows = statement.query_map([], row_to_playlist)?;
+        collect_rows(rows)
+    }
+
+    pub fn get_playlist_detail(&self, id: i64) -> Result<Option<PlaylistDetail>> {
+        let conn = self.connection.lock().expect("database lock poisoned");
+        let playlist = match row_to_playlist_by_id(&conn, id).optional()? {
+            Some(playlist) => playlist,
+            None => return Ok(None),
+        };
+        let mut statement = conn.prepare(
+            r#"
+            SELECT t.*
+            FROM playlist_items pi
+            JOIN tracks t ON t.id = pi.track_id
+            WHERE pi.playlist_id = ?1
+            ORDER BY pi.position, t.title COLLATE NOCASE
+            "#,
+        )?;
+        let rows = statement.query_map(params![id], row_to_track)?;
+        Ok(Some(PlaylistDetail {
+            playlist,
+            tracks: collect_rows(rows)?,
+        }))
+    }
+
+    pub fn add_track_to_playlist(&self, playlist_id: i64, track_id: i64) -> Result<PlaylistDetail> {
+        let now = Utc::now().to_rfc3339();
+        let conn = self.connection.lock().expect("database lock poisoned");
+        let tx = conn.unchecked_transaction()?;
+        let playlist_exists: Option<i64> = tx
+            .query_row(
+                "SELECT id FROM playlists WHERE id = ?1",
+                params![playlist_id],
+                |row| row.get(0),
+            )
+            .optional()?;
+        anyhow::ensure!(playlist_exists.is_some(), "playlist not found");
+        let track_exists: Option<i64> = tx
+            .query_row(
+                "SELECT id FROM tracks WHERE id = ?1",
+                params![track_id],
+                |row| row.get(0),
+            )
+            .optional()?;
+        anyhow::ensure!(track_exists.is_some(), "track not found");
+        let position: i64 = tx.query_row(
+            "SELECT COALESCE(MAX(position), -1) + 1 FROM playlist_items WHERE playlist_id = ?1",
+            params![playlist_id],
+            |row| row.get(0),
+        )?;
+        tx.execute(
+            r#"
+            INSERT OR IGNORE INTO playlist_items (playlist_id, track_id, position)
+            VALUES (?1, ?2, ?3)
+            "#,
+            params![playlist_id, track_id, position],
+        )?;
+        tx.execute(
+            "UPDATE playlists SET updated_at = ?2 WHERE id = ?1",
+            params![playlist_id, now],
+        )?;
+        tx.commit()?;
+        drop(conn);
+        self.get_playlist_detail(playlist_id)?
+            .ok_or_else(|| anyhow::anyhow!("playlist not found"))
+    }
+
     pub fn upsert_job(&self, job: &JobRecord) -> Result<()> {
         let conn = self.connection.lock().expect("database lock poisoned");
         conn.execute(
@@ -385,6 +485,30 @@ fn row_to_job(row: &Row<'_>) -> rusqlite::Result<JobRecord> {
     })
 }
 
+fn row_to_playlist(row: &Row<'_>) -> rusqlite::Result<Playlist> {
+    Ok(Playlist {
+        id: row.get("id")?,
+        name: row.get("name")?,
+        track_count: row.get("track_count")?,
+        created_at: parse_ts(row.get::<_, String>("created_at")?),
+        updated_at: parse_ts(row.get::<_, String>("updated_at")?),
+    })
+}
+
+fn row_to_playlist_by_id(conn: &Connection, id: i64) -> rusqlite::Result<Playlist> {
+    conn.query_row(
+        r#"
+        SELECT p.*, COUNT(pi.track_id) AS track_count
+        FROM playlists p
+        LEFT JOIN playlist_items pi ON pi.playlist_id = p.id
+        WHERE p.id = ?1
+        GROUP BY p.id
+        "#,
+        params![id],
+        row_to_playlist,
+    )
+}
+
 fn parse_ts(value: String) -> DateTime<Utc> {
     DateTime::parse_from_rfc3339(&value)
         .map(|ts| ts.with_timezone(&Utc))
@@ -408,26 +532,27 @@ mod tests {
     fn upserts_and_searches_tracks() {
         let dir = tempdir().unwrap();
         let db = LibraryDatabase::open(dir.path().join("library.db")).unwrap();
-        db.upsert_track(&NewTrack {
-            path: dir.path().join("song.flac"),
-            title: "Glass Sea".into(),
-            artist: "Auralux".into(),
-            album: "Refractions".into(),
-            album_artist: None,
-            genre: Some("Ambient".into()),
-            track_number: Some(1),
-            disc_number: None,
-            duration_ms: Some(123_000),
-            format: Some("flac".into()),
-            codec: Some("flac".into()),
-            bitrate: None,
-            sample_rate: Some(48_000),
-            channels: Some(2),
-            size_bytes: 42,
-            mtime: 10,
-            artwork_hash: None,
-        })
-        .unwrap();
+        let track_id = db
+            .upsert_track(&NewTrack {
+                path: dir.path().join("song.flac"),
+                title: "Glass Sea".into(),
+                artist: "Auralux".into(),
+                album: "Refractions".into(),
+                album_artist: None,
+                genre: Some("Ambient".into()),
+                track_number: Some(1),
+                disc_number: None,
+                duration_ms: Some(123_000),
+                format: Some("flac".into()),
+                codec: Some("flac".into()),
+                bitrate: None,
+                sample_rate: Some(48_000),
+                channels: Some(2),
+                size_bytes: 42,
+                mtime: 10,
+                artwork_hash: None,
+            })
+            .unwrap();
 
         let tracks = db
             .list_tracks(TrackQuery {
@@ -437,5 +562,50 @@ mod tests {
             .unwrap();
         assert_eq!(tracks.len(), 1);
         assert_eq!(tracks[0].artist, "Auralux");
+
+        let playlist = db.ensure_playlist("Favorites").unwrap();
+        let detail = db.add_track_to_playlist(playlist.id, track_id).unwrap();
+        assert_eq!(detail.playlist.name, "Favorites");
+        assert_eq!(detail.tracks.len(), 1);
+        assert_eq!(detail.tracks[0].title, "Glass Sea");
+
+        let detail = db.add_track_to_playlist(playlist.id, track_id).unwrap();
+        assert_eq!(detail.tracks.len(), 1);
+    }
+
+    #[test]
+    fn playlists_can_collect_tracks() {
+        let dir = tempdir().unwrap();
+        let db = LibraryDatabase::open(dir.path().join("library.db")).unwrap();
+        let track_id = db
+            .upsert_track(&NewTrack {
+                path: dir.path().join("song.flac"),
+                title: "Glass Sea".into(),
+                artist: "Auralux".into(),
+                album: "Refractions".into(),
+                album_artist: None,
+                genre: Some("Ambient".into()),
+                track_number: Some(1),
+                disc_number: None,
+                duration_ms: Some(123_000),
+                format: Some("flac".into()),
+                codec: Some("flac".into()),
+                bitrate: None,
+                sample_rate: Some(48_000),
+                channels: Some(2),
+                size_bytes: 42,
+                mtime: 10,
+                artwork_hash: None,
+            })
+            .unwrap();
+
+        let playlist = db.ensure_playlist("Road").unwrap();
+        let detail = db.add_track_to_playlist(playlist.id, track_id).unwrap();
+        assert_eq!(detail.playlist.track_count, 1);
+        assert_eq!(detail.tracks[0].id, track_id);
+
+        let playlists = db.list_playlists().unwrap();
+        assert_eq!(playlists.len(), 1);
+        assert_eq!(playlists[0].track_count, 1);
     }
 }

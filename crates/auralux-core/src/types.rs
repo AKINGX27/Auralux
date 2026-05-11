@@ -65,6 +65,21 @@ impl Default for TrackQuery {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Playlist {
+    pub id: i64,
+    pub name: String,
+    pub track_count: i64,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PlaylistDetail {
+    pub playlist: Playlist,
+    pub tracks: Vec<Track>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JobRecord {
     pub id: String,
     pub kind: String,

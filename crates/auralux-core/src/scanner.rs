@@ -91,6 +91,26 @@ impl LibraryScanner {
         Ok(summary)
     }
 
+    pub async fn import_file(&self, path: &Path) -> Result<i64> {
+        let canonical = path
+            .canonicalize()
+            .with_context(|| format!("audio file does not exist: {}", path.display()))?;
+        anyhow::ensure!(
+            canonical.is_file(),
+            "audio import path is not a file: {}",
+            canonical.display()
+        );
+        anyhow::ensure!(
+            is_supported(&canonical, &self.extensions),
+            "unsupported audio file extension: {}",
+            canonical.display()
+        );
+        let track = self.metadata.read(&canonical).await?;
+        let track_id = self.database.upsert_track(&track)?;
+        self.events.emit(AuraluxEvent::LibraryUpdated);
+        Ok(track_id)
+    }
+
     fn is_unchanged(&self, path: &Path) -> Result<bool> {
         let metadata = std::fs::metadata(path)?;
         let size = metadata.len() as i64;
