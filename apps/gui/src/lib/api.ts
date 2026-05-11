@@ -72,7 +72,8 @@ export type AuraluxEvent =
   | { type: 'job_progress'; job: JobRecord }
   | { type: 'error'; message: string };
 
-const apiBase = import.meta.env.VITE_AURALUX_API_BASE ?? '';
+const isTauriRuntime = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
+const apiBase = import.meta.env.VITE_AURALUX_API_BASE ?? (isTauriRuntime ? 'http://127.0.0.1:4147' : '');
 
 export async function apiGet<T>(path: string): Promise<T> {
   const response = await fetch(`${apiBase}${path}`);

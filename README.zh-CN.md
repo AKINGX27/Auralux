@@ -21,12 +21,13 @@ Auralux 目前是早期实现骨架，不是完整成品播放器。
 - Axum daemon，提供 REST 和 WebSocket API。
 - Svelte/Vite GUI，包含响应式玻璃风格界面。
 - Tauri 2 桌面/Android 壳骨架。
+- Android APK 支持通过系统文件选择器导入音乐文件，声明/请求音频媒体权限，并内嵌启动本地 daemon。
 - Cloudflare Worker relay 骨架，用于远程网页控制台的加密配对信令。
 - CI、文档、GPL 许可证和 NOTICE 文件。
 
 仍待完善：
 
-- Android 原生播放/转换插件：libmpv、FFmpeg codec pack、MediaSession、音频焦点、通知栏控制和 SAF 权限。
+- Android 原生播放/转换插件：libmpv、FFmpeg codec pack、MediaSession、音频焦点、通知栏控制和 SAF 目录授权。
 - GUI 中的持久播放队列和播放列表编辑。
 - 远程网页与本地 daemon 之间的端到端配对加密。
 - 使用真实和 fake FFmpeg/mpv 的更完整集成测试。
@@ -225,14 +226,29 @@ npm --workspace apps/tauri run dev
 npm --workspace apps/tauri run build
 ```
 
+Windows 桌面版可用下面的脚本构建：
+
+```bash
+npm run build:desktop:windows
+```
+
+便携版 EXE 会输出到 `release/auralux-windows-x86_64`，其中包含 `windows-register-file-associations.ps1`，可为当前 Windows 用户注册常见音频扩展名。常见音频扩展名也已经写入 Tauri bundle 配置，安装器构建会自动注册这些关联。若在 Windows 主机或带 NSIS 的环境中需要生成安装器，可运行：
+
+```bash
+AURALUX_WINDOWS_BUNDLE=1 npm run build:desktop:windows
+```
+
+Windows 壳会把通过扩展名关联打开的音频文件转发给共享 GUI；本地 daemon 运行时，这些文件会按路径导入当前 playlist。
+
 Android 命令已预留：
 
 ```bash
 npm --workspace apps/tauri run android:dev
 npm --workspace apps/tauri run android:build
+npm run build:android:apk
 ```
 
-完整 Android 原生媒体能力尚未完成，见 [docs/android.md](docs/android.md)。
+Android APK 会请求音频媒体权限，启动内嵌本地 daemon，并通过 Android 系统文件选择器把用户选择的音乐导入当前 playlist。完整 Android 原生后台播放和 codec pack 转换能力仍待完善，见 [docs/android.md](docs/android.md)。
 
 当前 release CI 会发布 CLI/daemon 二进制和 web 资源包。桌面 Tauri 安装包会在平台依赖和签名配置完成后加入。
 

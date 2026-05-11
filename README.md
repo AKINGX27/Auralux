@@ -21,12 +21,13 @@ Implemented in this repository:
 - Axum daemon exposing REST and WebSocket APIs.
 - Svelte/Vite GUI with a responsive glass-style interface.
 - Tauri 2 desktop/Android shell scaffold.
+- Android APK media-file import through the system picker, audio media permissions, and an embedded local daemon.
 - Cloudflare Worker relay scaffold for encrypted remote control pairing.
 - CI, docs, GPL license, and NOTICE files.
 
 Still planned:
 
-- Full Android native playback/conversion plugin with libmpv, FFmpeg codec packs, MediaSession, audio focus, notifications, and SAF permissions.
+- Full Android native playback/conversion plugin with libmpv, FFmpeg codec packs, MediaSession, audio focus, notifications, and SAF folder grants.
 - Durable playback queue and playlist editing in the GUI.
 - End-to-end pairing crypto between hosted web UI and local daemon.
 - Broader integration tests with real and fake FFmpeg/mpv binaries.
@@ -225,14 +226,29 @@ npm --workspace apps/tauri run dev
 npm --workspace apps/tauri run build
 ```
 
+Windows desktop builds can be produced with:
+
+```bash
+npm run build:desktop:windows
+```
+
+The portable Windows EXE is staged under `release/auralux-windows-x86_64`. It includes `windows-register-file-associations.ps1`, which registers common audio extensions for the current Windows user. File associations are also declared in the Tauri bundle config and are applied automatically by installer builds. To create an installer on a Windows host or an environment with NSIS available, run:
+
+```bash
+AURALUX_WINDOWS_BUNDLE=1 npm run build:desktop:windows
+```
+
+The Windows shell forwards associated audio files to the shared GUI. When the local daemon is running, opened files are imported into the active playlist by path.
+
 Android commands are scaffolded:
 
 ```bash
 npm --workspace apps/tauri run android:dev
 npm --workspace apps/tauri run android:build
+npm run build:android:apk
 ```
 
-Full Android native media support is not complete yet. See [docs/android.md](docs/android.md).
+The Android APK requests audio media permission, starts an embedded local daemon, and imports selected music files through Android's system file picker into the active playlist. Full Android native background playback and codec-pack conversion are still planned. See [docs/android.md](docs/android.md).
 
 Release CI currently publishes CLI/daemon binaries and web assets. Native Tauri installers will be added once desktop platform dependencies and signing are configured.
 

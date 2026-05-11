@@ -59,3 +59,5 @@ jobs:
           test -f apps/tauri/src-tauri/Cargo.toml
           test -f LICENSE
           grep -q '"frontendDist": "../../gui/dist"' apps/tauri/src-tauri/tauri.conf.json
+          grep -q '"dragDropEnabled": false' apps/tauri/src-tauri/tauri.conf.json
+          grep -q '"fileAssociations"' apps/tauri/src-tauri/tauri.conf.json

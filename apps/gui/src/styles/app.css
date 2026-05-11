@@ -43,6 +43,15 @@ button {
   color: #fff;
 }
 
+.visually-hidden {
+  position: fixed;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  opacity: 0;
+  pointer-events: none;
+}
+
 .glass {
   border: 1px solid rgba(255, 255, 255, 0.12);
   background:
@@ -120,6 +129,7 @@ button {
 .transport,
 .command-row button,
 .conversion-grid button,
+.primary-action,
 .dropzone {
   display: inline-flex;
   align-items: center;
@@ -280,6 +290,10 @@ button {
   flex: 1;
 }
 
+.content-grid.playlist-mode {
+  grid-template-columns: minmax(0, 1fr);
+}
+
 .surface {
   display: flex;
   flex-direction: column;
@@ -295,6 +309,14 @@ button {
   align-items: center;
   justify-content: space-between;
   gap: 14px;
+}
+
+.surface-actions,
+.playlist-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 0 0 auto;
 }
 
 .surface-head.tight {
@@ -318,6 +340,10 @@ button {
   grid-template-columns: minmax(0, 1fr) auto;
 }
 
+.library-command-row {
+  grid-template-columns: minmax(0, 1fr) auto auto;
+}
+
 .conversion-grid {
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 140px auto;
 }
@@ -336,12 +362,23 @@ select {
 }
 
 .command-row button,
-.conversion-grid button {
+.conversion-grid button,
+.primary-action {
   min-height: 44px;
   padding: 0 16px;
   background:
     linear-gradient(135deg, rgba(125, 211, 252, 0.24), rgba(244, 114, 182, 0.2)),
     rgba(255, 255, 255, 0.04);
+}
+
+.primary-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  border: 1px solid rgba(167, 216, 255, 0.24);
+  border-radius: 999px;
+  color: #f7fbff;
 }
 
 .track-list,
@@ -470,7 +507,7 @@ select {
 
 .playlist-shell {
   display: grid;
-  grid-template-columns: 262px minmax(0, 1fr);
+  grid-template-columns: minmax(220px, 280px) minmax(0, 1fr);
   gap: 16px;
   min-height: 0;
 }
@@ -486,6 +523,33 @@ select {
   gap: 14px;
   min-width: 0;
   min-height: 0;
+}
+
+.playlist-table-head {
+  display: grid;
+  grid-template-columns: 48px minmax(0, 1fr) 120px 76px;
+  gap: 14px;
+  padding: 0 14px 2px;
+  color: #9fb0c8;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.playlist-track-list {
+  gap: 8px;
+}
+
+.playlist-track {
+  grid-template-columns: 34px 50px minmax(0, 1fr) 120px 76px;
+  min-height: 72px;
+  padding: 10px 12px;
+}
+
+.track-index {
+  color: #9fb0c8;
+  font-size: 13px;
+  text-align: center;
 }
 
 .playlist-list {
@@ -722,7 +786,7 @@ progress {
   }
 
   .playlist-shell {
-    grid-template-columns: 228px minmax(0, 1fr);
+    grid-template-columns: minmax(196px, 240px) minmax(0, 1fr);
   }
 
   .tool-rail,
@@ -807,6 +871,7 @@ progress {
   }
 
   .command-row,
+  .library-command-row,
   .conversion-grid,
   .jobs .job,
   .tool-rail,
@@ -818,7 +883,27 @@ progress {
     grid-template-columns: 44px minmax(0, 1fr) 64px;
   }
 
-  .track > span {
+  .track:not(.playlist-track) > span {
+    display: none;
+  }
+
+  .playlist-table-head {
+    grid-template-columns: 34px minmax(0, 1fr) 64px;
+  }
+
+  .playlist-table-head span:nth-child(3) {
+    display: none;
+  }
+
+  .playlist-track {
+    grid-template-columns: 34px 44px minmax(0, 1fr) 64px;
+  }
+
+  .playlist-track > span:not(.track-index) {
+    display: none;
+  }
+
+  .track:not(.playlist-track) > span {
     display: none;
   }
 
@@ -849,7 +934,19 @@ progress {
     grid-template-columns: 44px minmax(0, 1fr);
   }
 
-  .track > span,
+  .playlist-table-head {
+    grid-template-columns: 34px minmax(0, 1fr);
+  }
+
+  .playlist-table-head span:last-child {
+    display: none;
+  }
+
+  .playlist-track {
+    grid-template-columns: 34px 44px minmax(0, 1fr);
+  }
+
+  .track:not(.playlist-track) > span,
   .track time {
     display: none;
   }

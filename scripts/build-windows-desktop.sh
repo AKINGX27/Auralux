@@ -6,6 +6,7 @@ cd "$ROOT_DIR"
 
 TARGET="${AURALUX_WINDOWS_TARGET:-x86_64-pc-windows-gnu}"
 ARCHIVE_NAME="${AURALUX_WINDOWS_ARCHIVE_NAME:-auralux-windows-x86_64}"
+WINDOWS_BUNDLE="${AURALUX_WINDOWS_BUNDLE:-0}"
 PROXY_URL="${AURALUX_PROXY:-http://127.0.0.1:19000}"
 RUSTUP_MIRROR="${AURALUX_RUSTUP_MIRROR:-https://mirrors.tuna.tsinghua.edu.cn/rustup}"
 NPM_REGISTRY="${AURALUX_NPM_REGISTRY:-https://registry.npmmirror.com}"
@@ -557,7 +558,11 @@ build_tauri_exe() {
   export CARGO_TARGET_X86_64_PC_WINDOWS_GNU_RUSTFLAGS="-Cdlltool=$MINGW_BIN/x86_64-w64-mingw32-dlltool ${CARGO_TARGET_X86_64_PC_WINDOWS_GNU_RUSTFLAGS:-}"
 
   log "Building Windows desktop executable with target $TARGET"
-  run_npm --workspace apps/tauri exec tauri -- build --target "$TARGET" --no-bundle --ci
+  if [ "$WINDOWS_BUNDLE" = "1" ]; then
+    run_npm --workspace apps/tauri exec tauri -- build --target "$TARGET" --bundles nsis --ci
+  else
+    run_npm --workspace apps/tauri exec tauri -- build --target "$TARGET" --no-bundle --ci
+  fi
 }
 
 stage_artifacts() {
@@ -573,12 +578,19 @@ stage_artifacts() {
   if [ -f "$(dirname "$exe_path")/WebView2Loader.dll" ]; then
     cp "$(dirname "$exe_path")/WebView2Loader.dll" "$stage_dir/"
   fi
+  cp scripts/windows-register-file-associations.ps1 "$stage_dir/"
   cp README.md README.zh-CN.md LICENSE NOTICE "$stage_dir/"
 
   if [ -d apps/gui/dist ]; then
     mkdir -p "$stage_dir/web"
     cp -R apps/gui/dist/. "$stage_dir/web/"
   fi
+
+  while IFS= read -r installer; do
+    [ -n "$installer" ] || continue
+    cp "$installer" "$stage_dir/"
+  done < <(find "target/$TARGET/release/bundle" "apps/tauri/src-tauri/target/$TARGET/release/bundle" \
+    -type f \( -name '*.exe' -o -name '*.msi' \) 2>/dev/null || true)
 
   (
     cd "$ROOT_DIR/release"

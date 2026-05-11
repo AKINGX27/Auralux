@@ -2,6 +2,7 @@
   import {
     Activity,
     Album,
+    FileAudio,
     FolderPlus,
     Library,
     ListMusic,
@@ -109,6 +110,10 @@
   let status = 'Local core not connected';
   let playlistDropActive = false;
   let playlistImporting = false;
+  let musicFileInput: HTMLInputElement | null = null;
+  let refreshRetryCount = 0;
+
+  const hasTauriRuntime = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
 
   $: activePlaylistTracks = activePlaylist?.tracks ?? [];
   $: selectedTrack =
@@ -130,6 +135,7 @@
   onMount(() => {
     void refresh();
     connectEvents();
+    void connectTauriOpenFiles();
   });
 
   async function refresh() {
@@ -145,9 +151,14 @@
       await syncActivePlaylist();
       playback = await apiGet<PlaybackState>('/api/playback/state').catch(() => playback);
       status = 'Local core connected';
+      refreshRetryCount = 0;
     } catch (err) {
       error = err instanceof Error ? err.message : String(err);
       status = 'Local core unavailable';
+      if (hasTauriRuntime && refreshRetryCount < 8) {
+        refreshRetryCount += 1;
+        window.setTimeout(() => void refresh(), 750);
+      }
     } finally {
       busy = false;
     }
@@ -258,9 +269,82 @@
     }
   }
 
+  async function chooseMusicFiles(event: Event) {
+    const input = event.currentTarget as HTMLInputElement;
+    await importFilesToPlaylist(Array.from(input.files ?? []));
+    input.value = '';
+  }
+
+  function openMusicPicker() {
+    musicFileInput?.click();
+  }
+
+  async function connectTauriOpenFiles() {
+    if (!hasTauriRuntime) return;
+    try {
+      const [{ listen }, { invoke }] = await Promise.all([import('@tauri-apps/api/event'), import('@tauri-apps/api/core')]);
+      const takeOpenFiles = () => invoke<string[]>('take_open_files');
+      await listen('auralux:open-files', () => {
+        void takeOpenFiles().then(importPathsToPlaylist);
+      });
+      await importPathsToPlaylist(await takeOpenFiles());
+    } catch (err) {
+      error = err instanceof Error ? err.message : String(err);
+    }
+  }
+
+  async function importPathsToPlaylist(paths: string[]) {
+    const audioPaths = Array.from(new Set(paths.filter(isAudioPath)));
+    if (audioPaths.length === 0) return;
+    playlistImporting = true;
+    playlistDropActive = false;
+    view = 'playlists';
+    try {
+      const playlist = activePlaylist?.playlist ?? (await apiPost<Playlist>('/api/playlists', { name: 'Favorites' }));
+      selectedPlaylistId = playlist.id;
+      activePlaylist = await apiPost<PlaylistDetail>(`/api/playlists/${playlist.id}/import-paths`, { paths: audioPaths });
+      selectedTrackId = activePlaylist.tracks.at(-1)?.id ?? selectedTrackId;
+      playlists = await apiGet<Playlist[]>('/api/playlists');
+      tracks = await apiGet<Track[]>(`/api/library/tracks${search ? `?search=${encodeURIComponent(search)}` : ''}`);
+      status = `${audioPaths.length} file${audioPaths.length === 1 ? '' : 's'} added`;
+    } catch (err) {
+      error = err instanceof Error ? err.message : String(err);
+    } finally {
+      playlistImporting = false;
+    }
+  }
+
+  async function importFilesToPlaylist(files: File[]) {
+    const audioFiles = files.filter(isAudioFile);
+    if (audioFiles.length === 0) return;
+    playlistImporting = true;
+    playlistDropActive = false;
+    view = 'playlists';
+    try {
+      const playlist = activePlaylist?.playlist ?? (await apiPost<Playlist>('/api/playlists', { name: 'Favorites' }));
+      const form = new FormData();
+      for (const file of audioFiles) form.append('files', file, file.name);
+      activePlaylist = await apiUpload<PlaylistDetail>(`/api/playlists/${playlist.id}/import`, form);
+      selectedPlaylistId = playlist.id;
+      selectedTrackId = activePlaylist.tracks.at(-1)?.id ?? selectedTrackId;
+      playlists = await apiGet<Playlist[]>('/api/playlists');
+      tracks = await apiGet<Track[]>(`/api/library/tracks${search ? `?search=${encodeURIComponent(search)}` : ''}`);
+      status = `${audioFiles.length} file${audioFiles.length === 1 ? '' : 's'} added`;
+    } catch (err) {
+      error = err instanceof Error ? err.message : String(err);
+    } finally {
+      playlistImporting = false;
+    }
+  }
+
   function isAudioFile(file: File) {
     if (file.type.startsWith('audio/')) return true;
     const extension = file.name.split('.').pop()?.toLowerCase() ?? '';
+    return audioExtensions.has(extension);
+  }
+
+  function isAudioPath(path: string) {
+    const extension = path.split(/[\\/]/).pop()?.split('.').pop()?.toLowerCase() ?? '';
     return audioExtensions.has(extension);
   }
 
@@ -409,7 +493,16 @@
       <section class="banner glass">{error}</section>
     {/if}
 
-    <section class="content-grid">
+    <input
+      class="visually-hidden"
+      bind:this={musicFileInput}
+      type="file"
+      accept="audio/*,.aac,.aif,.aiff,.alac,.ape,.caf,.dff,.dsf,.flac,.m4a,.mka,.mp2,.mp3,.mp4,.mpc,.oga,.ogg,.opus,.tak,.tta,.wav,.weba,.wma,.wv"
+      multiple
+      onchange={chooseMusicFiles}
+    />
+
+    <section class="content-grid" class:playlist-mode={view === 'playlists'}>
       <section class="surface glass">
         {#if view === 'library'}
           <div class="surface-head">
@@ -417,13 +510,19 @@
               <p>Library</p>
               <h2>Browse and queue</h2>
             </div>
-            <button class="icon-button" onclick={runScan} aria-label="Scan folder" title="Scan folder">
-              <FolderPlus size={18} />
-            </button>
+            <div class="surface-actions">
+              <button class="icon-button" onclick={openMusicPicker} aria-label="Add music files" title="Add music files">
+                <FileAudio size={18} />
+              </button>
+              <button class="icon-button" onclick={runScan} aria-label="Scan folder" title="Scan folder">
+                <FolderPlus size={18} />
+              </button>
+            </div>
           </div>
 
-          <div class="command-row">
+          <div class="command-row library-command-row">
             <input bind:value={scanPath} placeholder="/Users/name/Music or /sdcard/Music" />
+            <button onclick={openMusicPicker}><FileAudio size={17} />Add files</button>
             <button onclick={runScan}><FolderPlus size={17} />Scan</button>
           </div>
 
@@ -488,6 +587,13 @@
                 {/if}
               </div>
 
+              <div class="playlist-actions">
+                <button class="primary-action" onclick={openMusicPicker}>
+                  <FileAudio size={17} />
+                  Add music files
+                </button>
+              </div>
+
               <div
                 class="dropzone"
                 class:drop-active={playlistDropActive}
@@ -498,14 +604,22 @@
                 aria-label="Playlist drop area"
               >
                 <div>
-                  <strong>{playlistImporting ? 'Importing files' : 'Drop tracks here'}</strong>
-                  <span>{playlistImporting ? 'Uploading and indexing on the local daemon.' : 'Drag from the library or drop audio files from Explorer.'}</span>
+                  <strong>{playlistImporting ? 'Importing files' : 'Add tracks here'}</strong>
+                  <span>{playlistImporting ? 'Uploading and indexing on the local daemon.' : 'Choose music files on Android, or drag tracks/files on desktop.'}</span>
                 </div>
               </div>
 
-              <div class="track-list">
-                {#each activePlaylistTracks as track}
-                  <button class:selected={selectedTrackId === track.id} class="track" onclick={() => playTrack(track)}>
+              <div class="playlist-table-head">
+                <span>#</span>
+                <span>Title</span>
+                <span>Codec</span>
+                <span>Length</span>
+              </div>
+
+              <div class="track-list playlist-track-list">
+                {#each activePlaylistTracks as track, index}
+                  <button class:selected={selectedTrackId === track.id} class="track playlist-track" onclick={() => playTrack(track)}>
+                    <span class="track-index">{index + 1}</span>
                     <div class="cover">{track.title.slice(0, 1).toUpperCase()}</div>
                     <div class="track-meta">
                       <strong>{track.title}</strong>
@@ -591,6 +705,7 @@
         {/if}
       </section>
 
+      {#if view !== 'playlists'}
       <aside class="context-stack">
         <section class="glass context-panel">
           <div class="surface-head">
@@ -637,6 +752,7 @@
           </div>
         </section>
       </aside>
+      {/if}
     </section>
   </main>
 

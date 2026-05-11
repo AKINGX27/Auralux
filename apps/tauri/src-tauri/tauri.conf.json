@@ -30,6 +30,15 @@
     "active": true,
     "targets": "all",
     "license": "../../../LICENSE",
-    "resources": []
+    "resources": [],
+    "fileAssociations": [
+      {
+        "ext": ["aac", "aif", "aiff", "alac", "ape", "caf", "dff", "dsf", "flac", "m4a", "mka", "mp2", "mp3", "mp4", "mpc", "oga", "ogg", "opus", "tak", "tta", "wav", "weba", "wma", "wv"],
+        "name": "Auralux Audio",
+        "description": "Open audio files with Auralux",
+        "role": "Viewer",
+        "mimeType": "audio/*"
+      }
+    ]
   }
 }

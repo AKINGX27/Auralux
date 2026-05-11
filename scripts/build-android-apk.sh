@@ -579,11 +579,79 @@ build_frontend() {
 init_android_project() {
   if [ -f apps/tauri/src-tauri/gen/android/gradlew ]; then
     log "Android project already initialized"
-    return
+  else
+    log "Initializing Tauri Android project"
+    npm --workspace apps/tauri exec tauri -- android init --ci
   fi
 
-  log "Initializing Tauri Android project"
-  npm --workspace apps/tauri exec tauri -- android init --ci
+  patch_android_media_access
+}
+
+patch_android_media_access() {
+  local manifest="$ROOT_DIR/apps/tauri/src-tauri/gen/android/app/src/main/AndroidManifest.xml"
+  local main_activity="$ROOT_DIR/apps/tauri/src-tauri/gen/android/app/src/main/java/org/auralux/player/MainActivity.kt"
+  local network_config_dir="$ROOT_DIR/apps/tauri/src-tauri/gen/android/app/src/main/res/xml"
+  local network_config="$network_config_dir/network_security_config.xml"
+
+  if [ ! -f "$manifest" ] || [ ! -f "$main_activity" ]; then
+    printf 'Generated Android project is missing expected app files.\n' >&2
+    exit 1
+  fi
+
+  if ! grep -Fq "android.permission.READ_MEDIA_AUDIO" "$manifest"; then
+    perl -0pi -e 's#(<uses-permission android:name="android.permission.INTERNET" />)#$1\n    <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />\n    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />#' "$manifest"
+  fi
+
+  if ! grep -Fq 'android:networkSecurityConfig="@xml/network_security_config"' "$manifest"; then
+    perl -0pi -e 's#(android:label="@string/app_name"\n)#$1        android:networkSecurityConfig="@xml/network_security_config"\n#' "$manifest"
+  fi
+
+  mkdir -p "$network_config_dir"
+  cat > "$network_config" <<'EOF'
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="false">127.0.0.1</domain>
+        <domain includeSubdomains="false">localhost</domain>
+    </domain-config>
+</network-security-config>
+EOF
+
+  cat > "$main_activity" <<'EOF'
+package org.auralux.player
+
+import android.Manifest
+import android.content.pm.PackageManager
+import android.os.Build
+import android.os.Bundle
+import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.ContextCompat
+
+class MainActivity : TauriActivity() {
+  private val mediaPermissionLauncher =
+    registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
+
+  override fun onCreate(savedInstanceState: Bundle?) {
+    enableEdgeToEdge()
+    super.onCreate(savedInstanceState)
+    requestAudioLibraryPermission()
+  }
+
+  private fun requestAudioLibraryPermission() {
+    val permission = when {
+      Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU -> Manifest.permission.READ_MEDIA_AUDIO
+      Build.VERSION.SDK_INT >= Build.VERSION_CODES.M -> Manifest.permission.READ_EXTERNAL_STORAGE
+      else -> return
+    }
+    if (ContextCompat.checkSelfPermission(this, permission) != PackageManager.PERMISSION_GRANTED) {
+      mediaPermissionLauncher.launch(permission)
+    }
+  }
+}
+EOF
+
+  log "Patched Android media permissions, localhost API cleartext access, and runtime permission prompt"
 }
 
 build_apk() {
