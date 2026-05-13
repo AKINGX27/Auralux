@@ -34,6 +34,11 @@ MINGW_HOST_APT_PACKAGES=(
   libmpfr6
   libmpc3
 )
+NSIS_DIR="$BUILD_DIR/nsis"
+NSIS_APT_PACKAGES=(
+  nsis
+  nsis-common
+)
 
 log() {
   printf '[auralux-win] %s\n' "$*"
@@ -245,6 +250,45 @@ ensure_mingw() {
     exit 1
   fi
   write_mingw_shims
+}
+
+ensure_nsis() {
+  if [ "$WINDOWS_BUNDLE" != "1" ]; then
+    return
+  fi
+
+  if [ -x "$NSIS_DIR/usr/bin/makensis" ] &&
+    [ -f "$NSIS_DIR/usr/share/nsis/Stubs/zlib-x86-unicode" ]; then
+    log "Using cached NSIS: $(NSISDIR="$NSIS_DIR/usr/share/nsis" "$NSIS_DIR/usr/bin/makensis" -VERSION)"
+  else
+    require_cmd apt-get
+    require_cmd dpkg-deb
+
+    local package
+    for package in "${NSIS_APT_PACKAGES[@]}"; do
+      download_apt_package "$package"
+    done
+
+    log "Extracting NSIS into ${NSIS_DIR#$ROOT_DIR/}"
+    rm -rf "$NSIS_DIR.tmp"
+    mkdir -p "$NSIS_DIR.tmp"
+    for package in "${NSIS_APT_PACKAGES[@]}"; do
+      for deb in "$APT_DOWNLOAD_DIR"/"${package}"_*.deb; do
+        dpkg-deb -x "$deb" "$NSIS_DIR.tmp"
+      done
+    done
+    rm -rf "$NSIS_DIR"
+    mv "$NSIS_DIR.tmp" "$NSIS_DIR"
+  fi
+
+  cat > "$BIN_DIR/makensis" <<WRAPPER
+#!/usr/bin/env bash
+set -euo pipefail
+export NSISDIR="$NSIS_DIR/usr/share/nsis"
+exec "$NSIS_DIR/usr/bin/makensis" "\$@"
+WRAPPER
+  chmod +x "$BIN_DIR/makensis"
+  ln -sf makensis "$BIN_DIR/makensis.exe"
 }
 
 write_tool_wrappers() {
@@ -545,7 +589,8 @@ NODE
 }
 
 build_tauri_exe() {
-  export PATH="$BIN_DIR:$MINGW_BIN:$PATH"
+  export PATH="$BIN_DIR:$NSIS_DIR/usr/bin:$MINGW_BIN:$PATH"
+  export NSISDIR="$NSIS_DIR/usr/share/nsis"
   export LD_LIBRARY_PATH="$MINGW_HOST_LIB${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
   export CC_x86_64_pc_windows_gnu="$MINGW_BIN/x86_64-w64-mingw32-gcc-posix"
   export CXX_x86_64_pc_windows_gnu="$MINGW_BIN/x86_64-w64-mingw32-g++-posix"
@@ -616,6 +661,7 @@ main() {
 
   configure_proxy
   ensure_mingw
+  ensure_nsis
   install_windows_target
   build_frontend
   ensure_windows_icon
